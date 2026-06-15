@@ -1,12 +1,12 @@
 [Setup]
 AppName=CStage
-AppVersion=0.9
+AppVersion=0.9.1
 AppPublisher=Tinnth7
 AppPublisherURL=https://github.com/Tinnth7/CStage
 DefaultDirName={autopf}\CStage
 DefaultGroupName=CStage
 OutputDir=cstage_inst
-OutputBaseFilename=CStage_Setup_v0.9
+OutputBaseFilename=CStage_Setup_v0.9.1
 SetupIconFile=cstage.ico
 Compression=lzma
 SolidCompression=yes

@@ -26,7 +26,7 @@
 #include "imgui-SFML.h"
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-#define CSTAGE_VERSION "0.9"
+#define CSTAGE_VERSION "0.9.1"
 #define CSTAGE_BUILD_DATE __DATE__
 #define CSTAGE_BUILD_TIME __TIME__
 
