@@ -9,6 +9,7 @@
 #include <optional>
 #include <sstream>
 #include <cstdlib>
+#include <thread>
 
 // Windows API for fullscreen + file dialog
 #include <windows.h>
@@ -23,6 +24,11 @@
 // ImGui
 #include "imgui.h"
 #include "imgui-SFML.h"
+
+// ─── Version ──────────────────────────────────────────────────────────────────
+#define CSTAGE_VERSION "0.9"
+#define CSTAGE_BUILD_DATE __DATE__
+#define CSTAGE_BUILD_TIME __TIME__
 
 // ─── Palettes ────────────────────────────────────────────────────────────────
 const std::string PALETTE_SIMPLE_DARK    = " .,;:+*?%S#@";
@@ -138,8 +144,7 @@ void frame_to_ascii(const cv::Mat& frame, int cols, int rows,
 
 // ─── Tooltip helper (3 second delay) ─────────────────────────────────────────
 void tip(const char* msg) {
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_StationaryTime) &&
-        ImGui::GetCurrentContext()->HoveredIdTimer > 3.0f)
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_Stationary))
         ImGui::SetTooltip("%s", msg);
 }
 
@@ -150,10 +155,15 @@ int main() {
     bool  audio_loaded = false, paused       = false;
     bool  use_color    = false, use_detailed = false;
     bool  invert_pal   = false, fullscreen   = false;
+    bool  show_about       = false;
+    bool  audio_extracting = false;
 
     char        path_buffer[512] = "";
     std::string media_path       = "";
-    std::string temp_audio       = "cstage_temp_audio.wav";
+    char* tmp_env = getenv("TEMP");
+    std::string temp_audio = tmp_env
+        ? std::string(tmp_env) + "\\cstage_temp_audio.wav"
+        : "cstage_temp_audio.wav";
 
     cv::VideoCapture cap;
     cv::Mat          static_image, frame;
@@ -174,7 +184,8 @@ int main() {
     std::vector<std::vector<int>> ascii_colors;
 
     // ── Window ────────────────────────────────────────────────────────────
-    sf::RenderWindow window(sf::VideoMode({1024, 768}), "CStage", sf::Style::Default);
+    sf::RenderWindow window(sf::VideoMode({1024, 768}),
+        "CStage v" CSTAGE_VERSION, sf::Style::Default);
     window.setFramerateLimit(60);
     if (!ImGui::SFML::Init(window)) return -1;
 
@@ -184,7 +195,7 @@ int main() {
         s.Colors[ImGuiCol_Text]     = ImVec4(0.f, 1.f, 0.53f, 1.f);
         s.Colors[ImGuiCol_WindowBg] = ImVec4(0.05f, 0.05f, 0.05f, 1.f);
         s.Colors[ImGuiCol_FrameBg]  = ImVec4(0.08f, 0.08f, 0.08f, 1.f);
-        s.HoverStationaryDelay      = 3.0f; // 3 sec tooltip delay globally
+        s.HoverStationaryDelay      = 3.0f;
     };
     apply_theme();
 
@@ -201,7 +212,7 @@ int main() {
         cols = std::max(5, (int)(rows * adj));
     };
 
-    // ── Fullscreen via Windows API — no window recreation, no crash ────────
+    // ── Fullscreen via Windows API ─────────────────────────────────────────
     auto toggle_fullscreen = [&]() {
         fullscreen = !fullscreen;
         HWND hwnd  = window.getNativeHandle();
@@ -252,17 +263,19 @@ int main() {
                 video_aspect = vh > 0 ? vw / vh : 16.f / 9.f;
                 media_loaded = true;
 
-                // Extract audio via ffmpeg → WAV (SFML can't read AAC from mp4)
-                std::string cmd = "ffmpeg -y -i \"" + path +
+                std::string cmd = "\"ffmpeg.exe\" -y -i \"" + path +
                     "\" -vn -ar 44100 -ac 2 -f wav \"" +
                     temp_audio + "\" >nul 2>&1";
-                system(cmd.c_str());
-
-                if (music.openFromFile(temp_audio)) {
-                    audio_loaded = true;
-                    music.setVolume(volume);
-                    music.play();
-                }
+                audio_extracting = true;
+                std::thread([&, cmd]() {
+                    system(cmd.c_str());
+                    if (music.openFromFile(temp_audio)) {
+                        audio_loaded = true;
+                        music.setVolume(volume);
+                        music.play();
+                    }
+                    audio_extracting = false;
+                }).detach();
             }
         }
     };
@@ -295,7 +308,7 @@ int main() {
             if (cw > 0.f && ch > 0.f) font_aspect = cw / ch;
         }
 
-        // Layout — before grid calc
+        // Layout
         float screen_w = ImGui::GetIO().DisplaySize.x;
         float screen_h = ImGui::GetIO().DisplaySize.y;
         const float TOP = 25.f, BOT_H = 195.f, GAP = 10.f;
@@ -351,7 +364,74 @@ int main() {
                     toggle_fullscreen();
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Help")) {
+                if (ImGui::MenuItem("About CStage")) show_about = true;
+                ImGui::EndMenu();
+            }
             ImGui::EndMainMenuBar();
+        }
+
+        // ── About Dialog ──────────────────────────────────────────────────
+        if (show_about) {
+            ImGui::SetNextWindowSize(ImVec2(380, 270), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowPos(
+                ImVec2(screen_w / 2.f - 190.f, screen_h / 2.f - 135.f),
+                ImGuiCond_FirstUseEver);
+            ImGui::Begin("About CStage", &show_about,
+                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar);
+
+            ImGui::TextColored(ImVec4(0.f, 1.f, 0.53f, 1.f), "CStage v" CSTAGE_VERSION);
+            ImGui::SameLine();
+            ImGui::TextDisabled("| Built: " CSTAGE_BUILD_DATE " " CSTAGE_BUILD_TIME);
+            ImGui::Separator();
+
+            ImGui::Spacing();
+            ImGui::Text("ASCII-based video & image player");
+            ImGui::Text("Rewritten from PyStage in C++17");
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.f, 1.f, 0.53f, 1.f), "Stack");
+            ImGui::Separator();
+            ImGui::Text("Language   C++17");
+            ImGui::Text("GUI        Dear ImGui + imgui-SFML");
+            ImGui::Text("Windowing  SFML");
+            ImGui::Text("Vision     OpenCV");
+            ImGui::Text("Audio      ffmpeg + SFML Music");
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.f, 1.f, 0.53f, 1.f), "License & Source");
+            ImGui::Separator();
+            ImGui::Text("MIT License");
+            ImGui::Text("github.com/Tinnth7/CStage");
+
+            ImGui::Spacing();
+            ImGui::SetCursorPosX((380.f - 80.f) / 2.f);
+            if (ImGui::Button("Close", ImVec2(80, 0))) show_about = false;
+
+            ImGui::End();
+        }
+
+        // ── Extracting Audio Dialog ────────────────────────────────────────
+        if (audio_extracting) {
+            ImGui::SetNextWindowSize(ImVec2(260, 80), ImGuiCond_Always);
+            ImGui::SetNextWindowPos(
+                ImVec2(screen_w / 2.f - 130.f, screen_h / 2.f - 40.f),
+                ImGuiCond_Always);
+            ImGui::Begin("##extracting", nullptr,
+                ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoScrollbar);
+
+            ImGui::Spacing();
+            ImGui::SetCursorPosX(20.f);
+            ImGui::TextColored(ImVec4(0.f, 1.f, 0.53f, 1.f), "Extracting audio...");
+            ImGui::Spacing();
+            ImGui::SetCursorPosX(20.f);
+            ImGui::TextDisabled("Please wait, this may take a moment.");
+
+            ImGui::End();
         }
 
         // ── ASCII Projection Screen ───────────────────────────────────────
@@ -373,7 +453,6 @@ int main() {
             float cx = std::max(0.f, (avail.x - cols * cw * scale) / 2.f);
             float cy = std::max(0.f, (avail.y - rows * ch * scale) / 2.f);
 
-            // DrawList — zero gap pixel-perfect rendering
             ImDrawList* draw    = ImGui::GetWindowDrawList();
             ImVec2      win_pos = ImGui::GetWindowPos();
             ImVec2      content = ImGui::GetCursorPos();
